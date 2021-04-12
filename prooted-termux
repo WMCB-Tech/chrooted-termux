@@ -1,31 +1,38 @@
 #!/data/data/com.termux/files/usr/bin/bash
 mkdir -p binds
-folder=termux-fs/data/data/com.termux/files
+rootfs=termux-fs/
+folder=$rootfs/data/data/com.termux/files
 if [ -d "$folder" ]; then
     first=1
-    echo "skipping downloading"
+    echo "Skipping downloading"
 fi
 if [ "$first" != 1 ];then
     if [ ! -f "bootstrap.zip" ]; then
-        echo "downloading bootstrap package"
-        wget https://termux.net/bootstrap/bootstrap-`dpkg --print-architecture`.zip -O bootstrap.zip
+        echo "Downloading bootstrap package"
+        curl --output bootstrap.zip https://github.com/termux/termux-packages/releases/download/bootstrap-2021.02.19-r1/bootstrap-`dpkg --print-architecture`.zip --location
     fi
     cur=`pwd`
     mkdir -p $folder/usr
+    mkdir -p $folder/../cache
+    mkdir -p $rootfs/sdcard
     cd $folder/usr
-    echo "decompressing bootstrap image image"
+    echo "Decompressing bootstrap image"
     unzip $cur/bootstrap.zip
     while read p; do
-        echo "creating symlink for $p"
+        echo "Creating symlink for $p"
         ln -s ${p/←/ }
     done <SYMLINKS.txt
     rm SYMLINKS.txt
-    for f in bin libexec lib/apt/methods;do
-        echo "making files in $f executable"
+    for f in bin libexec;do
+        echo "Making files in $f executable"
         chmod -R 700 $f/*
     done
     cd $cur
     mkdir -p $folder/home
+    echo "Setting up Virtual SD Card"
+    mkdir -p $rootfs/{storage/emulated,storage/self}
+    ln -rs $rootfs/sdcard $rootfs/storage/emulated/0
+    ln -rs $rootfs/sdcard $rootfs/storage/self/primary
     echo "Setting permissions of root directory"
     chmod -rw termux-fs
     chmod -rw termux-fs/data
@@ -33,7 +40,7 @@ if [ "$first" != 1 ];then
 fi
 ff=/data/data/com.termux/files
 bin=start.sh
-echo "writing launch script"
+echo "Writing launch script"
 
 cat > $bin <<- EOM
 #!/bin/bash
@@ -51,7 +58,22 @@ command+=" -b /etc/"
 command+=" -b /proc/"
 command+=" -b /vendor"
 command+=" -b /data/dalvik-cache/"
-command+=" -b /property_contexts"
+
+# For Android 7 and Below
+if [ -f /property_contexts ]; then
+	command+=" -b /property_contexts"
+fi
+
+# For Android 10 and above
+if [ -d /apex ]; then
+	command+=" -b /apex"
+fi
+
+# For Android 11
+if [ -e /linkerconfig/ld.config.txt ]; then
+	command+=" -b /linkerconfig/ld.config.txt"
+fi
+
 if [ -n "\$(ls -A \$basedir/binds)" ]; then
     for f in \$basedir/binds/* ;do
         . \$f
@@ -60,13 +82,18 @@ fi
 command+=" -w /data/data/com.termux/files/home/"
 command+=" $ff/usr/bin/env -i"
 command+=" HOME=$ff/home"
-command+=" PATH=$ff/usr/bin:$ff/usr/bin/applets"
+command+=" PATH=$ff/usr/bin"
 command+=" TERM=\$TERM"
 command+=" ANDROID_DATA=/data"
 command+=" ANDROID_ROOT=/system"
+command+=" ANDROID_I18N_ROOT=\$ANDROID_I18N_ROOT"
+command+=" ANDROID_TZDATA_ROOT=\$ANDROID_TZDATA_ROOT"
+command+=" ANDROID_RUNTIME_ROOT=\$ANDROID_RUNTIME_ROOT"
+command+=" ANDROID_ART_ROOT=\$ANDROID_ART_ROOT"
+command+=" BOOTCLASSPATH=\$BOOTCLASSPATH"
+command+=" DEX2OATBOOTCLASSPATH=\$DEX2OATBOOTCLASSPATH"
 command+=" EXTERNAL_STORAGE=/sdcard"
 command+=" LANG=\$LANG"
-command+=" LD_LIBRARY_PATH=/data/data/com.termux/files/usr/lib"
 command+=" PREFIX=/data/data/com.termux/files/usr"
 command+=" TMPDIR=/data/data/com.termux/files/usr/tmp"
 com="\$@"
@@ -76,7 +103,8 @@ else
     eval "exec \$command login -c '\$com'"
 fi
 EOM
-echo "fixing shebang of $bin"
+echo "Fixing shebang of $bin"
 termux-fix-shebang $bin
-echo "making $bin executable"
+echo "Making $bin executable"
 chmod +x $bin
+echo "Success setting up the jailed environment, you may start by typing './start.sh'"
